@@ -1,160 +1,128 @@
-javascript:(function(){
-    /*
-     * Wealthsimple Transaction Export Bookmarklet
-     * Version: 0.1.0
-     * Features:
-     * - Exports to CSV (Date, Payee, Amount)
-     * - Formats Date as YYYY-MM-DD (compatible with YNAB/Excel)
-     * - Skips "Pending" transactions
-     * - Handles "Today"/"Yesterday" and standard dates
-     * - clean parsing of currency (handles negative symbols like â−)
-     */
+javascript: (() => {
+	/*
+	 * Wealthsimple Transaction Export Bookmarklet
+	 * Version: 0.2.0
+	 * Features:
+	 * - Exports to CSV (Date, Payee, Amount)
+	 * - Formats Date as YYYY-MM-DD (compatible with YNAB/Excel)
+	 * - Skips "Pending" transactions
+	 * - Handles "Today"/"Yesterday" and standard dates
+	 * - Parses transaction rows directly from innerText (no fragile CSS selectors)
+	 */
 
-    function cleanAmount(str) {
-        // Remove currency symbols, spaces, and normalize negative signs
-        return parseFloat(str.replace(/[â−â–â—−]/g, '-').replace(/[^\d.-]/g, ''));
-    }
+	function cleanAmount(str) {
+		// Normalize various minus/dash characters, remove commas, strip non-numeric
+		return parseFloat(
+			str
+				.replace(/[−\u2212\u2013\u2014]/g, "-")
+				.replace(/,/g, "")
+				.replace(/[^\d.-]/g, ""),
+		);
+	}
 
-    function formatDate(dateStr) {
-        const today = new Date();
-        let date;
-        
-        if (dateStr === "Today") {
-            date = today;
-        } else if (dateStr === "Yesterday") {
-            date = new Date(today);
-            date.setDate(today.getDate() - 1);
-        } else {
-            date = new Date(dateStr);
-            // If the date string doesn't have a year (e.g. "May 12"), assume current year
-            if (!/\d{4}/.test(dateStr)) {
-                date.setFullYear(today.getFullYear());
-            }
-        }
-        
-        // Return YYYY-MM-DD format
-        const year = date.getFullYear();
-        const month = (date.getMonth() + 1).toString().padStart(2, '0');
-        const day = date.getDate().toString().padStart(2, '0');
-        
-        return `${year}-${month}-${day}`;
-    }
+	function formatDate(dateStr) {
+		const today = new Date();
+		let date;
+		if (dateStr === "Today") {
+			date = today;
+		} else if (dateStr === "Yesterday") {
+			date = new Date(today);
+			date.setDate(today.getDate() - 1);
+		} else {
+			date = new Date(dateStr);
+			if (!/\d{4}/.test(dateStr)) date.setFullYear(today.getFullYear());
+		}
+		const year = date.getFullYear();
+		const month = String(date.getMonth() + 1).padStart(2, "0");
+		const day = String(date.getDate()).padStart(2, "0");
+		return `${year}-${month}-${day}`;
+	}
 
-    const rows = [];
-    const seen = new Set(); // To prevent duplicates
+	// Find the main feed container: grandparent of the first date h2.
+	// "Today" lives in an h2 inside a header div; all other dates are plain sibling divs.
+	const firstH2 = [...document.querySelectorAll("h2")].find((h) =>
+		/Today|Yesterday|\d/.test(h.innerText),
+	);
+	if (!firstH2) {
+		alert(
+			"Could not find activity feed.\nMake sure you are on the Activity page at my.wealthsimple.com/activity",
+		);
+		return;
+	}
+	const container = firstH2.parentElement.parentElement;
 
-    // Step 1: Find all Date Headers (H2 tags)
-    const headers = document.querySelectorAll('h2');
+	const rows = [];
+	const seen = new Set();
+	let currentDate = null;
 
-    headers.forEach(header => {
-        const dateStr = header.innerText.trim();
-        
-        // Skip headers that aren't dates (like "Activity")
-        if (!/Today|Yesterday|\d/.test(dateStr)) return;
+	for (const child of container.children) {
+		const text = child.innerText && child.innerText.trim();
+		if (!text) continue;
 
-        const formattedDate = formatDate(dateStr);
+		// Date header: "Today" has an h2 inside its container div; other dates are plain divs
+		const h2 = child.querySelector("h2");
+		const dateText = h2 ? h2.innerText.trim() : text;
+		if (
+			/^(Today|Yesterday)$/.test(dateText) ||
+			/^\w+ \d{1,2}, \d{4}$/.test(dateText)
+		) {
+			currentDate = formatDate(dateText);
+			continue;
+		}
 
-        // Step 2: Look at all sibling elements until the next Header
-        let sibling = header.nextElementSibling;
-        while (sibling && sibling.tagName !== 'H2') {
-            
-            // Step 3: Find Amount fields within this section
-            // We use the 'data-fs-privacy-rule="unmask"' attribute which WS uses for sensitive data
-            const amounts = sibling.querySelectorAll('p[data-fs-privacy-rule="unmask"]');
+		// Transaction row: must have a current date, contain CAD, and not be Pending
+		if (!currentDate || !text.includes("CAD") || text.includes("Pending"))
+			continue;
 
-            amounts.forEach(pAmount => {
-                const text = pAmount.innerText;
-                
-                // Check if this paragraph actually looks like an amount
-                if (text.includes('$') || text.includes('CAD')) {
-                    
-                    // Step 4: Find the container row
-                    // Traverse up parent elements until we find a container that holds both Payee and Amount
-                    let row = pAmount.parentElement;
-                    let attempts = 0;
-                    
-                    while (row && row.parentElement !== sibling && attempts < 5) {
-                        // A valid row usually has at least 2 unmasked fields (Payee and Amount)
-                        if (row.querySelectorAll('p[data-fs-privacy-rule="unmask"]').length >= 2) {
-                            break;
-                        }
-                        row = row.parentElement;
-                        attempts++;
-                    }
+		// Transaction innerText format: "Payee\n\nType\n\nAccount\n\nAmount CAD\n\n..."
+		const parts = text
+			.split("\n\n")
+			.map((s) => s.trim())
+			.filter(Boolean);
+		const payee = parts[0];
+		const amountPart = parts.find((p) => p.includes("CAD") && p.includes("$"));
+		if (!payee || !amountPart) continue;
 
-                    if (row) {
-                        // Step 5: Check for "Pending" status and skip if found
-                        if (row.innerText.includes("Pending")) {
-                            return;
-                        }
+		const amount = cleanAmount(amountPart);
+		if (Number.isNaN(amount)) continue;
 
-                        // Step 6: Extract Payee and Amount
-                        const allUnmasked = row.querySelectorAll('p[data-fs-privacy-rule="unmask"]');
-                        if (allUnmasked.length >= 2) {
-                            // The first unmasked element is invariably the Payee
-                            const payeeRaw = allUnmasked[0].innerText;
-                            
-                            // Escape quotes in payee name for valid CSV
-                            const payeeEscaped = `"${payeeRaw.replace(/"/g, '""')}"`;
-                            
-                            const amountClean = cleanAmount(text);
-                            
-                            // Create a unique ID to avoid adding the same transaction twice
-                            // (e.g. if the DOM structure causes us to find the same row multiple times)
-                            const uniqueId = formattedDate + payeeRaw + amountClean;
+		const uid = currentDate + payee + amount;
+		if (!seen.has(uid)) {
+			seen.add(uid);
+			rows.push(
+				[currentDate, `"${payee.replace(/"/g, '""')}"`, amount].join(","),
+			);
+		}
+	}
 
-                            if (!seen.has(uniqueId)) {
-                                seen.add(uniqueId);
-                                rows.push([formattedDate, payeeEscaped, amountClean].join(","));
-                            }
-                        }
-                    }
-                }
-            });
-            
-            sibling = sibling.nextElementSibling;
-        }
-    });
+	if (rows.length === 0) {
+		const url = window.location.href;
+		const dollarCount = (document.body.innerText.match(/\$/g) || []).length;
+		let msg = "No completed transactions found.\n\n";
+		if (!url.includes("wealthsimple.com")) {
+			msg +=
+				"You don't appear to be on Wealthsimple.\nNavigate to my.wealthsimple.com/activity first.";
+		} else if (dollarCount === 0) {
+			msg +=
+				"No dollar amounts found on page.\nMake sure you're on the Activity page.";
+		} else {
+			msg +=
+				"Tip: Scroll down to load more transactions before clicking.\n\n" +
+				"If transactions are visible but not exporting, please report at:\n" +
+				"github.com/dizzlkheinz/wealthsimple-csv-exporter/issues";
+		}
+		alert(msg);
+		return;
+	}
 
-    // Final Step: Export or Alert
-    if (rows.length === 0) {
-        const diagnostics = {
-            h2Count: document.querySelectorAll('h2').length,
-            privacyAttrCount: document.querySelectorAll('[data-fs-privacy-rule]').length,
-            dollarSignCount: (document.body.innerText.match(/\$/g) || []).length,
-            url: window.location.href
-        };
-
-        let message = "No completed transactions found.\n\n";
-
-        if (!diagnostics.url.includes('wealthsimple.com')) {
-            message += "⚠️ You don't appear to be on Wealthsimple.\nNavigate to my.wealthsimple.com/activity first.";
-        } else if (diagnostics.dollarSignCount === 0) {
-            message += "⚠️ No dollar amounts found on page.\nMake sure you're on the Activity page.";
-        } else if (diagnostics.privacyAttrCount === 0) {
-            message += "⚠️ Page structure may have changed.\n\n" +
-                       "Diagnostics:\n" +
-                       `• H2 headers: ${diagnostics.h2Count}\n` +
-                       `• Dollar signs on page: ${diagnostics.dollarSignCount}\n\n` +
-                       "Please report this issue at:\ngithub.com/dizzlkheinz/wealthsimple-csv-exporter/issues";
-        } else {
-            message += "Tip: Scroll down to load more transactions before clicking.\n\n" +
-                       "If transactions are visible but not exporting, " +
-                       "please report at:\ngithub.com/dizzlkheinz/wealthsimple-csv-exporter/issues";
-        }
-
-        alert(message);
-    } else {
-        const csvContent = "Date,Payee,Amount\n" + rows.join("\n");
-        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-        const url = URL.createObjectURL(blob);
-        
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = "wealthsimple_activity.csv";
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-    }
+	const csvContent = `Date,Payee,Amount\n${rows.join("\n")}`;
+	const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+	const url = URL.createObjectURL(blob);
+	const link = document.createElement("a");
+	link.href = url;
+	link.download = "wealthsimple_activity.csv";
+	document.body.appendChild(link);
+	link.click();
+	document.body.removeChild(link);
+	URL.revokeObjectURL(url);
 })();
