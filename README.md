@@ -1,6 +1,6 @@
 # Wealthsimple CSV Exporter
 
-![Version](https://img.shields.io/badge/version-0.2.1-green.svg)
+![Version](https://img.shields.io/badge/version-0.2.2-green.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
 
 A simple bookmarklet to export your Wealthsimple transaction history to CSV format, compatible with budgeting tools like YNAB, Excel, and Google Sheets. Works with any Wealthsimple account.

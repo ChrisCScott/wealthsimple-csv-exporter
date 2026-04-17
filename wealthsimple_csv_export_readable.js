@@ -1,13 +1,15 @@
 javascript: (() => {
 	/*
 	 * Wealthsimple Transaction Export Bookmarklet
-	 * Version: 0.2.1
+	 * Version: 0.2.2
 	 * Features:
 	 * - Exports to CSV (Date, Payee, Amount)
 	 * - Formats Date as YYYY-MM-DD (compatible with YNAB/Excel)
 	 * - Skips "Pending" transactions
 	 * - Handles "Today"/"Yesterday" and standard dates
-	 * - Parses transaction rows directly from innerText (no fragile CSS selectors)
+	 * - Parses transaction rows directly from innerText (robust to DOM changes)
+	 * - Allows legitimate duplicate transactions (same date/payee/amount on different days)
+	 * - Deduplicates by element ID to prevent re-processing
 	 */
 
 	function cleanAmount(str) {
@@ -86,7 +88,11 @@ javascript: (() => {
 		const amount = cleanAmount(amountPart);
 		if (Number.isNaN(amount)) continue;
 
-		const uid = currentDate + payee + amount;
+		// Include button element ID to uniquely identify each transaction and allow
+		// legitimate duplicate transactions (same date/payee/amount) to both be exported
+		const button = child.querySelector('button[id]');
+		const buttonId = button?.id || '';
+		const uid = currentDate + payee + amount + buttonId;
 		if (!seen.has(uid)) {
 			seen.add(uid);
 			rows.push(
