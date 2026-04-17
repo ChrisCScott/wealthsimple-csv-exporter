@@ -1,7 +1,7 @@
 javascript: (() => {
 	/*
 	 * Wealthsimple Transaction Export Bookmarklet
-	 * Version: 0.2.0
+	 * Version: 0.2.1
 	 * Features:
 	 * - Exports to CSV (Date, Payee, Amount)
 	 * - Formats Date as YYYY-MM-DD (compatible with YNAB/Excel)
@@ -76,7 +76,7 @@ javascript: (() => {
 
 		// Transaction innerText format: "Payee\n\nType\n\nAccount\n\nAmount CAD\n\n..."
 		const parts = text
-			.split("\n\n")
+			.split(/\n+/)
 			.map((s) => s.trim())
 			.filter(Boolean);
 		const payee = parts[0];
