@@ -1,7 +1,7 @@
 javascript: (() => {
 	/*
 	 * Wealthsimple Transaction Export Bookmarklet
-	 * Version: 0.2.2
+	 * Version: 0.2.3
 	 * Features:
 	 * - Exports to CSV (Date, Payee, Amount)
 	 * - Formats Date as YYYY-MM-DD (compatible with YNAB/Excel)
@@ -61,8 +61,8 @@ javascript: (() => {
 		const text = child.innerText && child.innerText.trim();
 		if (!text) continue;
 
-		// Date header: "Today" has an h2 inside its container div; other dates are plain divs
-		const h2 = child.querySelector("h2");
+		// Date header: "Today" has a heading inside its container div; other dates are plain divs
+		const h2 = child.querySelector("h1, h2, h3, h4, h5, h6");
 		const dateText = h2 ? h2.innerText.trim() : text;
 		if (
 			/^(Today|Yesterday)$/.test(dateText) ||
@@ -76,7 +76,8 @@ javascript: (() => {
 		if (!currentDate || !text.includes("CAD") || text.includes("Pending"))
 			continue;
 
-		// Transaction innerText format: "Payee\n\nType\n\nAccount\n\nAmount CAD\n\n..."
+		// Transaction innerText format: "Payee[newline(s)]Type[newline(s)]Account[newline(s)]Amount CAD..."
+		// Parser handles single or multiple consecutive newlines via /\n+/ regex
 		const parts = text
 			.split(/\n+/)
 			.map((s) => s.trim())
