@@ -40,18 +40,18 @@ javascript: (() => {
 		return `${year}-${month}-${day}`;
 	}
 
-	// Find the main feed container: grandparent of the first date h2.
-	// "Today" lives in an h2 inside a header div; all other dates are plain sibling divs.
-	const firstH2 = [...document.querySelectorAll("h2")].find((h) =>
+	// Find the main feed container: grandparent of the first date header.
+	// "Today" lives in an h3 inside a header div; all other dates are plain sibling divs.
+	const firstHeading = [...document.querySelectorAll("h1, h2, h3, h4, h5, h6")].find((h) =>
 		/Today|Yesterday|\d/.test(h.innerText),
 	);
-	if (!firstH2) {
+	if (!firstHeading) {
 		alert(
 			"Could not find activity feed.\nMake sure you are on the Activity page at my.wealthsimple.com/activity",
 		);
 		return;
 	}
-	const container = firstH2.parentElement.parentElement;
+	const container = firstHeading.parentElement.parentElement;
 
 	const rows = [];
 	const seen = new Set();
