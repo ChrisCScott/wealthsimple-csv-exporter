@@ -9,9 +9,8 @@ javascript: (() => {
 	 * - Handles "Today"/"Yesterday" and standard dates
 	 * - Parses transaction rows directly from innerText (robust to DOM changes)
 	 * - Allows legitimate duplicate transactions (same date/payee/amount on different days)
-	 * - Deduplicates by element ID to prevent re-processing
-	 */
-
+ 	 * - Deduplicates by transaction text to prevent re-processing
+ 	 */
 	function cleanAmount(str) {
 		// Normalize various minus/dash characters, remove commas, strip non-numeric
 		return parseFloat(
@@ -40,65 +39,61 @@ javascript: (() => {
 		return `${year}-${month}-${day}`;
 	}
 
-	// Find the main feed container: grandparent of the first date header.
-	// "Today" lives in an h3 inside a header div; all other dates are plain sibling divs.
-	const firstHeading = [...document.querySelectorAll("h1, h2, h3, h4, h5, h6")].find((h) =>
-		/Today|Yesterday|\d/.test(h.innerText),
+	const datePattern = /^(Today|Yesterday|\w+ \d{1,2}, \d{4})$/;
+	const pageRoot = document.querySelector("main#main") || document.body;
+	const dateHeaders = [...pageRoot.querySelectorAll("h1, h2, h3, h4, h5, h6")].filter((h) =>
+		datePattern.test(h.innerText.trim()),
 	);
-	if (!firstHeading) {
+
+	if (dateHeaders.length === 0) {
 		alert(
-			"Could not find activity feed.\nMake sure you are on the Activity page at my.wealthsimple.com/activity",
+			"Could not find transactions on this page.\nMake sure you are on the Wealthsimple Transactions page and try again.",
 		);
 		return;
 	}
-	const container = firstHeading.parentElement.parentElement;
 
 	const rows = [];
 	const seen = new Set();
-	let currentDate = null;
 
-	for (const child of container.children) {
-		const text = child.innerText && child.innerText.trim();
-		if (!text) continue;
+	function parseTransactionRow(el) {
+		if (!el || !el.innerText) return null;
+		const text = el.innerText.trim();
+		if (!text || text.includes("Pending") || !/\$/.test(text)) return null;
 
-		// Date header: "Today" has a heading inside its container div; other dates are plain divs
-		const h2 = child.querySelector("h1, h2, h3, h4, h5, h6");
-		const dateText = h2 ? h2.innerText.trim() : text;
-		if (
-			/^(Today|Yesterday)$/.test(dateText) ||
-			/^\w+ \d{1,2}, \d{4}$/.test(dateText)
-		) {
-			currentDate = formatDate(dateText);
-			continue;
-		}
-
-		// Transaction row: must have a current date, contain CAD, and not be Pending
-		if (!currentDate || !text.includes("CAD") || text.includes("Pending"))
-			continue;
-
-		// Transaction innerText format: "Payee[newline(s)]Type[newline(s)]Account[newline(s)]Amount CAD..."
-		// Parser handles single or multiple consecutive newlines via /\n+/ regex
-		const parts = text
-			.split(/\n+/)
-			.map((s) => s.trim())
+		const parts = [...el.querySelectorAll("p[data-fs-privacy-rule=\"unmask\"]")]
+			.map((p) => p.innerText.trim())
 			.filter(Boolean);
+		if (parts.length === 0) return null;
+
 		const payee = parts[0];
-		const amountPart = parts.find((p) => p.includes("CAD") && p.includes("$"));
-		if (!payee || !amountPart) continue;
+		const amountPart = [...parts].reverse().find((part) => /\$/.test(part));
+		if (!payee || !amountPart) return null;
 
 		const amount = cleanAmount(amountPart);
-		if (Number.isNaN(amount)) continue;
+		if (Number.isNaN(amount)) return null;
 
-		// Include button element ID to uniquely identify each transaction and allow
-		// legitimate duplicate transactions (same date/payee/amount) to both be exported
-		const button = child.querySelector('button[id]');
-		const buttonId = button?.id || '';
-		const uid = currentDate + payee + amount + buttonId;
-		if (!seen.has(uid)) {
-			seen.add(uid);
-			rows.push(
-				[currentDate, `"${payee.replace(/"/g, '""')}"`, amount].join(","),
-			);
+		return { payee, amount, amountPart, text };
+	}
+
+	for (const header of dateHeaders) {
+		const currentDate = formatDate(header.innerText.trim());
+		let candidate = header.parentElement.nextElementSibling;
+		while (candidate) {
+			const nestedHeader = candidate.querySelector("h1, h2, h3, h4, h5, h6");
+			if (nestedHeader && datePattern.test(nestedHeader.innerText.trim())) break;
+
+			const transaction = parseTransactionRow(candidate);
+			if (transaction) {
+				const uid = `${currentDate}|${transaction.payee}|${transaction.amount}|${transaction.amountPart}`;
+				if (!seen.has(uid)) {
+					seen.add(uid);
+					rows.push(
+						[currentDate, `"${transaction.payee.replace(/"/g, '""')}"`, transaction.amount].join(","),
+					);
+				}
+			}
+
+			candidate = candidate.nextElementSibling;
 		}
 	}
 
