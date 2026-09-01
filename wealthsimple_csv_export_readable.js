@@ -40,65 +40,72 @@ javascript: (() => {
 		return `${year}-${month}-${day}`;
 	}
 
-	// Find the main feed container: grandparent of the first date header.
-	// "Today" lives in an h3 inside a header div; all other dates are plain sibling divs.
-	const firstHeading = [...document.querySelectorAll("h1, h2, h3, h4, h5, h6")].find((h) =>
-		/Today|Yesterday|\d/.test(h.innerText),
+	// Instead of assuming a single container, scan the page for transaction
+	// elements (those containing a CAD amount) and locate each transaction's
+	// date by walking previous siblings and ancestors. This is more robust to
+	// DOM changes that move the feed around.
+	const candidates = [...document.querySelectorAll("*")].filter((el) =>
+		el.innerText && el.innerText.includes("CAD") && el.innerText.includes("$") && !el.innerText.includes("Pending"),
 	);
-	if (!firstHeading) {
-		alert(
-			"Could not find activity feed.\nMake sure you are on the Activity page at my.wealthsimple.com/activity",
-		);
-		return;
-	}
-	const container = firstHeading.parentElement.parentElement;
+
+	// Matches date headers like "Today", "Yesterday", or "August 28, 2026"
+	const headingRegex = /^(Today|Yesterday)$|^\w+ \d{1,2}(, \d{4})?$/;
 
 	const rows = [];
 	const seen = new Set();
-	let currentDate = null;
 
-	for (const child of container.children) {
-		const text = child.innerText && child.innerText.trim();
+	function findDateForElement(el) {
+		const headingRegex = /^(Today|Yesterday)$|^\w+ \d{1,2}(, \d{4})?$/;
+		let node = el;
+		while (node) {
+			// Check previous element siblings first
+			let sib = node.previousElementSibling;
+			while (sib) {
+				const h = sib.querySelector("h1, h2, h3, h4, h5, h6");
+				const text = h ? h.innerText.trim() : (sib.innerText && sib.innerText.trim());
+				if (text && headingRegex.test(text)) return formatDate(text);
+				sib = sib.previousElementSibling;
+			}
+			node = node.parentElement;
+		}
+		return null;
+	}
+
+	function isAmountOnlyLine(s) {
+		if (!s) return false;
+		s = s.trim();
+		return /^[-−\u2212\u2013\u2014]?\s*\$[\d,]+(?:\.\d{1,2})?\s*CAD$/i.test(s);
+	}
+
+	for (const el of candidates) {
+		const currentDate = findDateForElement(el);
+		if (!currentDate) continue;
+
+		const text = el.innerText && el.innerText.trim();
 		if (!text) continue;
 
-		// Date header: "Today" has a heading inside its container div; other dates are plain divs
-		const h2 = child.querySelector("h1, h2, h3, h4, h5, h6");
-		const dateText = h2 ? h2.innerText.trim() : text;
-		if (
-			/^(Today|Yesterday)$/.test(dateText) ||
-			/^\w+ \d{1,2}, \d{4}$/.test(dateText)
-		) {
-			currentDate = formatDate(dateText);
-			continue;
-		}
-
-		// Transaction row: must have a current date, contain CAD, and not be Pending
-		if (!currentDate || !text.includes("CAD") || text.includes("Pending"))
-			continue;
-
-		// Transaction innerText format: "Payee[newline(s)]Type[newline(s)]Account[newline(s)]Amount CAD..."
-		// Parser handles single or multiple consecutive newlines via /\n+/ regex
 		const parts = text
 			.split(/\n+/)
 			.map((s) => s.trim())
 			.filter(Boolean);
+		// Skip elements that are just the amount (they cause duplicate rows).
+		if (parts.length === 1 && isAmountOnlyLine(parts[0])) continue;
+
 		const payee = parts[0];
+		// If the first line is itself a date header, skip — it's not a transaction
+		if (headingRegex.test(payee)) continue;
 		const amountPart = parts.find((p) => p.includes("CAD") && p.includes("$"));
 		if (!payee || !amountPart) continue;
 
 		const amount = cleanAmount(amountPart);
 		if (Number.isNaN(amount)) continue;
 
-		// Include button element ID to uniquely identify each transaction and allow
-		// legitimate duplicate transactions (same date/payee/amount) to both be exported
-		const button = child.querySelector('button[id]');
+		const button = el.querySelector('button[id]');
 		const buttonId = button?.id || '';
 		const uid = currentDate + payee + amount + buttonId;
 		if (!seen.has(uid)) {
 			seen.add(uid);
-			rows.push(
-				[currentDate, `"${payee.replace(/"/g, '""')}"`, amount].join(","),
-			);
+			rows.push([currentDate, `"${payee.replace(/"/g, '""')}"`, amount].join(","));
 		}
 	}
 
