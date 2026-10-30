@@ -8,8 +8,7 @@ javascript: (() => {
 	 * - Skips "Pending" transactions
 	 * - Handles "Today"/"Yesterday" and standard dates
 	 * - Parses transaction rows directly from innerText (robust to DOM changes)
-	 * - Allows legitimate duplicate transactions (same date/payee/amount on different days)
-	 * - Deduplicates by element ID to prevent re-processing
+	 * - Preserves distinct transactions even when their date, payee, and amount match
 	 */
 
 	function cleanAmount(str) {
@@ -40,11 +39,9 @@ javascript: (() => {
 		return `${year}-${month}-${day}`;
 	}
 
-	// Instead of assuming a single container, scan the page for transaction
-	// elements (those containing a CAD amount) and locate each transaction's
-	// date by walking previous siblings and ancestors. This is more robust to
-	// DOM changes that move the feed around.
-	const candidates = [...document.querySelectorAll("*")].filter((el) =>
+	// Transaction buttons contain the payee and amount together on both the
+	// activity and account-details pages, without matching nested amount text.
+	const candidates = [...document.querySelectorAll("button")].filter((el) =>
 		el.innerText && el.innerText.includes("CAD") && el.innerText.includes("$") && !el.innerText.includes("Pending"),
 	);
 
@@ -52,10 +49,8 @@ javascript: (() => {
 	const headingRegex = /^(Today|Yesterday)$|^\w+ \d{1,2}(, \d{4})?$/;
 
 	const rows = [];
-	const seen = new Set();
 
 	function findDateForElement(el) {
-		const headingRegex = /^(Today|Yesterday)$|^\w+ \d{1,2}(, \d{4})?$/;
 		let node = el;
 		while (node) {
 			// Check previous element siblings first
@@ -93,20 +88,14 @@ javascript: (() => {
 
 		const payee = parts[0];
 		// If the first line is itself a date header, skip — it's not a transaction
-		if (headingRegex.test(payee)) continue;
-		const amountPart = parts.find((p) => p.includes("CAD") && p.includes("$"));
+		if (headingRegex.test(payee) || isAmountOnlyLine(payee)) continue;
+		const amountPart = parts.find(isAmountOnlyLine);
 		if (!payee || !amountPart) continue;
 
 		const amount = cleanAmount(amountPart);
 		if (Number.isNaN(amount)) continue;
 
-		const button = el.querySelector('button[id]');
-		const buttonId = button?.id || '';
-		const uid = currentDate + payee + amount + buttonId;
-		if (!seen.has(uid)) {
-			seen.add(uid);
-			rows.push([currentDate, `"${payee.replace(/"/g, '""')}"`, amount].join(","));
-		}
+		rows.push([currentDate, `"${payee.replace(/"/g, '""')}"`, amount].join(","));
 	}
 
 	if (rows.length === 0) {
