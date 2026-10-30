@@ -17,6 +17,7 @@ Desktop.ini
 
 # Test exports
 *.csv
+examples/
 
 # Node modules (if ever used for development)
 node_modules/
